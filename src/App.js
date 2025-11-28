@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Container,
   Paper,
@@ -26,7 +26,9 @@ import {
 import {
   Calculate as CalculateIcon,
   Functions as FunctionsIcon,
-  ShowChart as ShowChartIcon
+  ShowChart as ShowChartIcon,
+  Error as ErrorIcon,
+  CheckCircle as CheckCircleIcon
 } from '@mui/icons-material';
 
 // ==================== ВЫЧИСЛИТЕЛЬНЫЕ МЕТОДЫ ====================
@@ -45,9 +47,12 @@ const parseExpression = (expression) => {
       .replace(/sqrt/g, 'Math.sqrt')
       .replace(/abs/g, 'Math.abs');
 
-    return new Function('x', `return ${jsExpression};`);
+    const func = new Function('x', `return ${jsExpression};`);
+    // Проверяем, что функция работает
+    func(1);
+    return func;
   } catch (error) {
-    throw new Error('Ошибка в синтаксисе математического выражения');
+    throw new Error('Неправильный синтаксис математического выражения');
   }
 };
 
@@ -181,6 +186,180 @@ const iterationMethod = (phi, x0, epsilon, maxIterations = 100) => {
   };
 };
 
+// ==================== КОМПОНЕНТ ГРАФИКА ====================
+
+const FunctionPlot = ({ equation, root, a, b, method }) => {
+  const canvasRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (!canvasRef.current || !equation) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    const width = canvas.width;
+    const height = canvas.height;
+
+    // Очистка canvas
+    ctx.fillStyle = '#ffffff';
+    ctx.fillRect(0, 0, width, height);
+
+    try {
+      const f = parseExpression(equation);
+
+      // Определение диапазона
+      let xMin, xMax;
+      if (method === 'iteration') {
+        xMin = root - 2;
+        xMax = root + 2;
+      } else {
+        xMin = parseFloat(a);
+        xMax = parseFloat(b);
+      }
+
+      const padding = Math.abs(xMax - xMin) * 0.2;
+      xMin -= padding;
+      xMax += padding;
+
+      // Вычисление значений функции
+      const points = [];
+      let yMin = Infinity;
+      let yMax = -Infinity;
+
+      for (let i = 0; i <= width; i++) {
+        const x = xMin + (xMax - xMin) * (i / width);
+        try {
+          const y = f(x);
+          if (isFinite(y)) {
+            points.push({ x, y });
+            yMin = Math.min(yMin, y);
+            yMax = Math.max(yMax, y);
+          }
+        } catch (e) {
+          // Пропускаем точки, где функция не определена
+        }
+      }
+
+      if (points.length === 0) return;
+
+      // Добавление отступов по Y
+      const yPadding = Math.abs(yMax - yMin) * 0.2;
+      yMin -= yPadding;
+      yMax += yPadding;
+
+      // Функции преобразования координат
+      const xToCanvas = (x) => ((x - xMin) / (xMax - xMin)) * width;
+      const yToCanvas = (y) => height - ((y - yMin) / (yMax - yMin)) * height;
+
+      // Рисуем сетку
+      ctx.strokeStyle = '#e0e0e0';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 10; i++) {
+        const x = xMin + (xMax - xMin) * (i / 10);
+        const canvasX = xToCanvas(x);
+        ctx.beginPath();
+        ctx.moveTo(canvasX, 0);
+        ctx.lineTo(canvasX, height);
+        ctx.stroke();
+
+        const y = yMin + (yMax - yMin) * (i / 10);
+        const canvasY = yToCanvas(y);
+        ctx.beginPath();
+        ctx.moveTo(0, canvasY);
+        ctx.lineTo(width, canvasY);
+        ctx.stroke();
+      }
+
+      // Рисуем оси
+      ctx.strokeStyle = '#000000';
+      ctx.lineWidth = 2;
+
+      // Ось X
+      if (yMin <= 0 && yMax >= 0) {
+        const y0 = yToCanvas(0);
+        ctx.beginPath();
+        ctx.moveTo(0, y0);
+        ctx.lineTo(width, y0);
+        ctx.stroke();
+      }
+
+      // Ось Y
+      if (xMin <= 0 && xMax >= 0) {
+        const x0 = xToCanvas(0);
+        ctx.beginPath();
+        ctx.moveTo(x0, 0);
+        ctx.lineTo(x0, height);
+        ctx.stroke();
+      }
+
+      // Рисуем график функции
+      ctx.strokeStyle = '#2196f3';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      let started = false;
+
+      for (const point of points) {
+        const canvasX = xToCanvas(point.x);
+        const canvasY = yToCanvas(point.y);
+
+        if (!started) {
+          ctx.moveTo(canvasX, canvasY);
+          started = true;
+        } else {
+          ctx.lineTo(canvasX, canvasY);
+        }
+      }
+      ctx.stroke();
+
+      // Отмечаем корень
+      if (root !== null && root !== undefined) {
+        const rootX = xToCanvas(root);
+        const rootY = yToCanvas(f(root));
+
+        // Красная точка для корня
+        ctx.fillStyle = '#f44336';
+        ctx.beginPath();
+        ctx.arc(rootX, rootY, 6, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // Вертикальная линия от корня к оси X
+        ctx.strokeStyle = '#f44336';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.beginPath();
+        ctx.moveTo(rootX, rootY);
+        ctx.lineTo(rootX, yToCanvas(0));
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Подпись корня
+        ctx.fillStyle = '#000000';
+        ctx.font = 'bold 12px Arial';
+        ctx.fillText(`x = ${root.toFixed(4)}`, rootX + 10, rootY - 10);
+      }
+
+      // Подписи осей
+      ctx.fillStyle = '#000000';
+      ctx.font = '12px Arial';
+      ctx.fillText(`x: [${xMin.toFixed(2)}, ${xMax.toFixed(2)}]`, 10, height - 10);
+      ctx.fillText(`y: [${yMin.toFixed(2)}, ${yMax.toFixed(2)}]`, 10, 20);
+
+    } catch (error) {
+      console.error('Ошибка при построении графика:', error);
+    }
+  }, [equation, root, a, b, method]);
+
+  return (
+    <Box sx={{ width: '100%', height: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
+      <canvas
+        ref={canvasRef}
+        width={600}
+        height={400}
+        style={{ border: '1px solid #e0e0e0', borderRadius: '8px', maxWidth: '100%' }}
+      />
+    </Box>
+  );
+};
+
 // ==================== ГЛАВНЫЙ КОМПОНЕНТ ====================
 
 const App = () => {
@@ -195,9 +374,125 @@ const App = () => {
   const [result, setResult] = useState(null);
   const [error, setError] = useState('');
 
+  const validateInputs = () => {
+    const errors = [];
+
+    // Проверка уравнения
+    if (!equation.trim()) {
+      errors.push({
+        field: 'Уравнение',
+        message: 'Поле не может быть пустым',
+        example: 'Пример: x^3 - x - 1'
+      });
+    } else {
+      try {
+        const f = parseExpression(equation);
+        f(1); // Проверяем, что функция работает
+      } catch (e) {
+        errors.push({
+          field: 'Уравнение',
+          message: 'Неправильный синтаксис',
+          example: 'Правильно: x^3 - x - 1\nНеправильно: x³ - х - 1'
+        });
+      }
+    }
+
+    // Проверка параметров метода
+    if (method === 'bisection' || method === 'chord') {
+      const aNum = parseFloat(a);
+      const bNum = parseFloat(b);
+
+      if (isNaN(aNum)) {
+        errors.push({
+          field: 'Левая граница (a)',
+          message: 'Должно быть числом',
+          example: 'Правильно: 1 или -2.5\nНеправильно: abc или пусто'
+        });
+      }
+
+      if (isNaN(bNum)) {
+        errors.push({
+          field: 'Правая граница (b)',
+          message: 'Должно быть числом',
+          example: 'Правильно: 2 или 3.5\nНеправильно: xyz или пусто'
+        });
+      }
+
+      if (!isNaN(aNum) && !isNaN(bNum) && aNum >= bNum) {
+        errors.push({
+          field: 'Границы отрезка',
+          message: 'a должно быть меньше b',
+          example: 'Правильно: a=1, b=2\nНеправильно: a=2, b=1'
+        });
+      }
+    }
+
+    if (method === 'iteration') {
+      if (!phiEquation.trim()) {
+        errors.push({
+          field: 'Итерационная функция',
+          message: 'Поле не может быть пустым',
+          example: 'Пример: (x + 1)^(1/3)'
+        });
+      } else {
+        try {
+          const phi = parseExpression(phiEquation);
+          phi(1);
+        } catch (e) {
+          errors.push({
+            field: 'Итерационная функция',
+            message: 'Неправильный синтаксис',
+            example: 'Правильно: (x + 1)^(1/3)\nНеправильно: ∛(x + 1)'
+          });
+        }
+      }
+
+      const x0Num = parseFloat(x0);
+      if (isNaN(x0Num)) {
+        errors.push({
+          field: 'Начальное приближение (x₀)',
+          message: 'Должно быть числом',
+          example: 'Правильно: 1.5\nНеправильно: abc'
+        });
+      }
+    }
+
+    // Проверка точности
+    const epsNum = parseFloat(epsilon);
+    if (isNaN(epsNum) || epsNum <= 0) {
+      errors.push({
+        field: 'Точность (ε)',
+        message: 'Должно быть положительным числом',
+        example: 'Правильно: 0.0001 или 0.001\nНеправильно: -0.01 или 0'
+      });
+    }
+
+    // Проверка максимального числа итераций
+    const maxIter = parseInt(maxIterations);
+    if (isNaN(maxIter) || maxIter <= 0) {
+      errors.push({
+        field: 'Максимальное число итераций',
+        message: 'Должно быть положительным целым числом',
+        example: 'Правильно: 100\nНеправильно: -10 или 0'
+      });
+    }
+
+    return errors;
+  };
+
   const handleSolve = () => {
     setError('');
     setResult(null);
+
+    // Валидация входных данных
+    const validationErrors = validateInputs();
+    if (validationErrors.length > 0) {
+      const errorMessage = validationErrors.map(err =>
+        `❌ ${err.field}: ${err.message}\n${err.example}`
+      ).join('\n\n');
+      setError(errorMessage);
+      return;
+    }
 
     try {
       const eps = parseFloat(epsilon);
@@ -222,7 +517,7 @@ const App = () => {
         setResult(res);
       }
     } catch (err) {
-      setError(err.message);
+      setError(`❌ Ошибка вычисления: ${err.message}\n\n💡 Совет: Проверьте правильность ввода данных и условия применимости метода`);
     }
   };
 
@@ -236,7 +531,7 @@ const App = () => {
   };
 
   return (
-    <Container maxWidth="lg" sx={{ py: 4 }}>
+    <Container maxWidth="xl" sx={{ py: 4 }}>
       <Paper elevation={3} sx={{ p: 4, mb: 4, background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)' }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, color: 'white' }}>
           <FunctionsIcon sx={{ fontSize: 48 }} />
@@ -252,7 +547,7 @@ const App = () => {
       </Paper>
 
       <Grid container spacing={3}>
-        <Grid item xs={12} md={5}>
+        <Grid item xs={12} md={4}>
           <Card elevation={2}>
             <CardContent>
               <Typography variant="h6" gutterBottom color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
@@ -279,7 +574,7 @@ const App = () => {
                 value={equation}
                 onChange={(e) => setEquation(e.target.value)}
                 sx={{ mb: 2 }}
-                helperText="Пример: x^3 - x - 1, sin(x) - 0.5*x, exp(x) - 3*x"
+                helperText="Пример: x^3 - x - 1"
               />
 
               {method === 'iteration' && (
@@ -302,7 +597,6 @@ const App = () => {
                         label="Левая граница (a)"
                         value={a}
                         onChange={(e) => setA(e.target.value)}
-                        type="number"
                       />
                     </Grid>
                     <Grid item xs={6}>
@@ -311,7 +605,6 @@ const App = () => {
                         label="Правая граница (b)"
                         value={b}
                         onChange={(e) => setB(e.target.value)}
-                        type="number"
                       />
                     </Grid>
                   </Grid>
@@ -324,7 +617,6 @@ const App = () => {
                   label="Начальное приближение (x₀)"
                   value={x0}
                   onChange={(e) => setX0(e.target.value)}
-                  type="number"
                   sx={{ mb: 2 }}
                 />
               )}
@@ -336,7 +628,6 @@ const App = () => {
                     label="Точность (ε)"
                     value={epsilon}
                     onChange={(e) => setEpsilon(e.target.value)}
-                    type="number"
                   />
                 </Grid>
                 <Grid item xs={6}>
@@ -345,7 +636,6 @@ const App = () => {
                     label="Макс. итераций"
                     value={maxIterations}
                     onChange={(e) => setMaxIterations(e.target.value)}
-                    type="number"
                   />
                 </Grid>
               </Grid>
@@ -367,16 +657,22 @@ const App = () => {
 
               <Box sx={{ mt: 2, p: 2, bgcolor: 'grey.50', borderRadius: 1 }}>
                 <Typography variant="caption" color="text.secondary">
-                  <strong>Доступные функции:</strong> sin, cos, tan, exp, ln, log, sqrt, abs, ^ (степень)
+                  <strong>Доступные функции:</strong><br />
+                  sin, cos, tan, exp, ln, log, sqrt, abs<br />
+                  ^ (степень)
                 </Typography>
               </Box>
             </CardContent>
           </Card>
         </Grid>
 
-        <Grid item xs={12} md={7}>
+        <Grid item xs={12} md={8}>
           {error && (
-            <Alert severity="error" sx={{ mb: 2 }}>
+            <Alert
+              severity="error"
+              sx={{ mb: 2, whiteSpace: 'pre-line' }}
+              icon={<ErrorIcon />}
+            >
               {error}
             </Alert>
           )}
@@ -431,6 +727,22 @@ const App = () => {
                       </Paper>
                     </Grid>
                   </Grid>
+                </CardContent>
+              </Card>
+
+              <Card elevation={2} sx={{ mb: 2 }}>
+                <CardContent>
+                  <Typography variant="h6" gutterBottom color="primary" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <ShowChartIcon /> График функции
+                  </Typography>
+                  <Divider sx={{ mb: 2 }} />
+                  <FunctionPlot
+                    equation={equation}
+                    root={result.root}
+                    a={a}
+                    b={b}
+                    method={method}
+                  />
                 </CardContent>
               </Card>
 
@@ -513,58 +825,8 @@ const App = () => {
               </Card>
             </>
           )}
-
-          {!result && !error && (
-            <Card elevation={2}>
-              <CardContent>
-                <Box sx={{ textAlign: 'center', py: 8 }}>
-                  <FunctionsIcon sx={{ fontSize: 64, color: 'grey.300', mb: 2 }} />
-                  <Typography variant="h6" color="text.secondary">
-                    Введите данные и нажмите "Решить уравнение"
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>
-                    Результаты вычислений появятся здесь
-                  </Typography>
-                </Box>
-              </CardContent>
-            </Card>
-          )}
         </Grid>
       </Grid>
-
-      <Paper sx={{ p: 3, mt: 4, bgcolor: 'grey.50' }}>
-        <Typography variant="h6" gutterBottom>
-          📚 Примеры уравнений для тестирования
-        </Typography>
-        <Grid container spacing={2}>
-          <Grid item xs={12} md={4}>
-            <Typography variant="subtitle2" color="primary">Алгебраические:</Typography>
-            <Typography variant="body2">• x^3 - x - 1 = 0</Typography>
-            <Typography variant="body2">• x^2 - 4*x + 3 = 0</Typography>
-            <Typography variant="body2">• x^4 - 5*x^2 + 4 = 0</Typography>
-          </Grid>
-          <Grid item xs={12} md={4}>
-            <Typography variant="subtitle2" color="primary">Трансцендентные:</Typography>
-            <Typography variant="body2">• exp(x) - 3*x = 0</Typography>
-            <Typography variant="body2">• sin(x) - 0.5*x = 0</Typography>
-            <Typography variant="body2">• ln(x) + x^2 - 5 = 0</Typography>
-          </Grid>
-          <Grid item xs={12} md={4}>
-            <Typography variant="subtitle2" color="primary">Смешанные:</Typography>
-            <Typography variant="body2">• x*exp(x) - cos(x) = 0</Typography>
-            <Typography variant="body2">• sin(x) + ln(x) - x = 0</Typography>
-            <Typography variant="body2">• x^2 - exp(-x) = 0</Typography>
-          </Grid>
-        </Grid>
-      </Paper>
-
-      <Box sx={{ mt: 3, textAlign: 'center' }}>
-        <Typography variant="caption" color="text.secondary">
-          Курсовая работа: Составление пакетной прикладной программы для решения нелинейных уравнений
-          <br />
-          Выполнил: Алихонов Ш. | Преподаватель: Олимов М. | 2024
-        </Typography>
-      </Box>
     </Container>
   );
 };
